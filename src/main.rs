@@ -1,4 +1,4 @@
-use std::io;
+use std::{collections::HashMap, io};
 
 use tokio::net::TcpListener;
 
@@ -6,7 +6,7 @@ mod http;
 use http::*;
 
 async fn handle(socket: tokio::net::TcpStream) -> Result<(), Error> {
-    let connection = Connection::new(socket).await?;
+    let mut connection = Connection::new(socket).await?;
     println!(
         "method:{:?}\nuri:{:?}\nversion:{:?}\nheaders:{:?}",
         connection.request.method,
@@ -14,6 +14,16 @@ async fn handle(socket: tokio::net::TcpStream) -> Result<(), Error> {
         connection.request.version,
         connection.request.headers
     );
+    let mut res_headers: HashMap<String, String> = HashMap::new();
+    // res_headers.insert("Content-Length".to_string(), "0".to_string());
+    connection
+        .respond(Response {
+            status: StatusCode::ok(),
+            headers: res_headers,
+            body: &String::from("What's up bro"),
+        })
+        .await?;
+
     Ok(())
 }
 
