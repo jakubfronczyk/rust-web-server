@@ -23,6 +23,8 @@ impl From<std::string::FromUtf8Error> for Error {
         Error::Utf8Error(internal_err)
     }
 }
+
+#[derive(Debug)]
 enum Method {
     GET,
     POST,
@@ -43,6 +45,8 @@ impl From<&str> for Method {
         }
     }
 }
+
+#[derive(Debug)]
 enum Version {
     HTTP1_1,
 }
@@ -64,11 +68,10 @@ struct Request {
     headers: HashMap<String, String>,
     query_params: HashMap<String, String>,
     path_params: HashMap<String, String>,
-    reader: tokio::net::TcpStream,
 }
 
 impl Request {
-    pub async fn new(mut reader: tokio::net::TcpStream) -> RequestParseResult {
+    pub async fn new(reader: &mut tokio::net::TcpStream) -> RequestParseResult {
         // Initialize variables to store request data
         let mut first_line: String = String::new();
         let mut headers: HashMap<String, String> = HashMap::new();
@@ -78,19 +81,22 @@ impl Request {
         loop {
             let b = reader.read_u8().await?; // Read a byte from the stream
             buffer.push(b); // Store the byte in the buffer
-
-            // Check if we have reached the end of a header line
+                            // Check if we have reached the end of a header line
             if b as char == '\n' {
                 // If this is the first line, parse it as the request line
                 if first_line.is_empty() {
-                    first_line = String::from_utf8(buffer.clone())?; // Parse the first line
+                    // reading first line
+                    println!("Buffer len: {:?}", buffer.len());
+                    first_line = String::from_utf8(buffer[0..buffer.len() - 2].to_vec())?; // Parse the first line
+                    println!("First line is: {:?}", first_line);
                     buffer.clear(); // Clear the buffer for the next line
                 } else {
                     // If it's not the first line, parse it as a header and add it to the headers map
                     if buffer.len() == 2 && buffer[0] as char == '\r' {
                         break; // If we encounter an empty line, we've reached the end of the headers
                     }
-                    let header_line = String::from_utf8(buffer.clone())?; // Parse the header line
+                    let header_line = String::from_utf8(buffer[0..buffer.len() - 2].to_vec())?; // Parse the header line
+                    buffer.clear();
                     let mut iter = header_line.split(":");
                     let key = match iter.next() {
                         Some(k) => k,
@@ -107,6 +113,7 @@ impl Request {
 
         // Parse the request line into method, URI, and HTTP version
         let mut first_line_iter = first_line.split(" "); // Split the first line by space
+        let method: Method = first_line_iter.next().unwrap().into();
         let uri_iter_next_unwrap = first_line_iter.next().unwrap().to_string(); // Get the URI part of the first line
         let mut uri_iter = uri_iter_next_unwrap.split("?"); // Split the URI part by question mark to separate URI and query parameters
         let uri = match uri_iter.next() {
@@ -140,25 +147,56 @@ impl Request {
 
         // Create and return the Request object
         Ok(Request {
-            method: first_line_iter.next().unwrap().into(),
+            method,
             uri: uri.to_string(),
             version: first_line_iter.next().unwrap().into(),
             headers: headers,
             query_params: query_params,
-            reader: reader,
             path_params: HashMap::new(),
         })
     }
 }
+struct Connection {
+    request: Request,
+    socket: tokio::net::TcpStream,
+}
 
-async fn handle(mut socket: tokio::net::TcpStream) -> io::Result<()> {
-    socket.write_all(b"Hello World form urst").await?;
+impl Connection {
+    pub async fn new(mut socket: tokio::net::TcpStream) -> Result<Connection, Error> {
+        let request = Request::new(&mut socket).await?;
+
+        Ok(Connection { request, socket })
+    }
+
+    pub async fn respond(&self, status: usize, body: &str) -> Result<(), Error> {
+        Ok(())
+        // self.socket.write_all(body)
+    }
+}
+
+async fn handle(socket: tokio::net::TcpStream) -> Result<(), Error> {
+    let connection = Connection::new(socket).await?;
+    println!(
+        "method:{:?}\nuri:{:?}\nversion:{:?}\nheaders:{:?}",
+        connection.request.method,
+        connection.request.uri,
+        connection.request.version,
+        connection.request.headers
+    );
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
+    let listener = match TcpListener::bind("127.0.0.1:8080").await {
+        Ok(listener) => listener,
+        Err(e) => {
+            eprintln!("Failed to bind to address: {}", e);
+            return Err(e);
+        }
+    };
+
+    println!("Server listening on port 8080");
 
     loop {
         let (socket, _) = listener.accept().await?;
